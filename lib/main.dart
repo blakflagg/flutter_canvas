@@ -1,6 +1,9 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'dart:convert';
+import 'dart:collection';
+import 'dart:math';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -40,8 +43,80 @@ class MyImage extends StatelessWidget {
   }
 }
 
-class MyPainter extends StatelessWidget {
+class MyPainter extends StatefulWidget {
   const MyPainter({super.key});
+
+  @override
+  State<MyPainter> createState() => _MyPainterState();
+}
+
+class _MyPainterState extends State<MyPainter> {
+  List<Point> points = [];
+
+  double tX = 0;
+  double tY = 0;
+  double scale = 1.0;
+
+  void addPoint(Offset position) {
+    double x, y;
+    x = position.dx / scale;
+    y = position.dy / scale;
+
+    Point p = Point(x - tX, y - tY);
+    print(p.toString());
+    setState(() {
+      points.add(p);
+    });
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) {
+    double scaleDelta = 0.0;
+
+    double scaleTemp = 1.0;
+    scaleTemp = details.scale.clamp(-0.24, 2.5);
+
+    if (scaleTemp != 1 && scaleTemp >= -0.24 && scaleTemp <= 2.5) {
+      scaleDelta = scale - scaleTemp;
+    } else {
+      scaleDelta = 0;
+    }
+
+    setState(() {
+      if (scaleDelta < 0) {
+        zoomIn(scaleDelta);
+      } else if (scaleDelta > 0) {
+        zoomOut(scaleDelta);
+      }
+
+      tX += details.focalPointDelta.dx;
+      tY += details.focalPointDelta.dy;
+    });
+    scaleTemp = 0;
+  }
+
+  void zoomIn(double scaleDelta) {
+    if (scale > 2.5) {
+      scale = 2.5;
+    }
+
+    if (scale < 2.5) {
+      scale += 0.01; //scaleDelta.abs();
+    }
+  }
+
+  void zoomOut(double scaleDelta) {
+    if (scale <= 0.24) {
+      scale = 0.24;
+    }
+
+    if (scale > -0.24) {
+      scale -= 0.01;
+    }
+  }
+
+  void _completeLongPress(LongPressStartDetails details) {
+    addPoint(details.localPosition);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -54,10 +129,15 @@ class MyPainter extends StatelessWidget {
           return FittedBox(
             child: SizedBox(
               width: 400,
-              height: 400,
-              child: CustomPaint(
-                painter: ImagePainter(snapshot.data),
-                child: Container(),
+              height: 600,
+              child: GestureDetector(
+                onScaleUpdate: _handleScaleUpdate,
+                onLongPressStart: _completeLongPress,
+                // onScaleEnd: _handleScaleEnd,
+                child: CustomPaint(
+                  painter: ImagePainter(snapshot.data, points, tX, tY, scale),
+                  child: Container(),
+                ),
               ),
             ),
           );
@@ -68,34 +148,13 @@ class MyPainter extends StatelessWidget {
   }
 }
 
-class ShapePainter extends CustomPainter {
-  void drawCirc(Canvas canvas, Size size, paint) {
-    Offset center = Offset(size.width / 2, size.height / 2);
-
-    canvas.drawCircle(center, 10, paint);
-  }
-
-  void drawHorizontalLine(Canvas canvas, Size size, paint) {
-    Offset startingPoint = Offset(0, size.height / 2);
-    Offset endingPoint = Offset(size.width, size.height / 2);
-
-    canvas.drawLine(startingPoint, endingPoint, paint);
-  }
+class Point {
+  final double x, y;
+  Point(this.x, this.y);
 
   @override
-  void paint(Canvas canvas, Size size) {
-    var paint = Paint()
-      ..color = Colors.teal
-      ..strokeWidth = 5
-      // ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    drawHorizontalLine(canvas, size, paint);
-    drawCirc(canvas, size, paint);
-  }
-
-  @override
-  bool shouldRepaint(CustomPainter oldDelegate) {
-    return false;
+  String toString() {
+    return 'x:$x y:$y';
   }
 }
 
@@ -113,39 +172,43 @@ Future<ui.Image> loadImageResize() async {
 
   ui.Codec codec = await ui.instantiateImageCodec(
       bytesBuffer.buffer.asUint8List(),
-      targetHeight: 600,
-      targetWidth: 400);
-  ui.FrameInfo frameInfo = await codec.getNextFrame();
-  return frameInfo.image;
-}
-
-Future<ui.Image> loadImageResize2() async {
-  //using the image package
-  final assetImageByteData = await rootBundle.load('images/sitemap.jpg');
-  image.Image baseSizeImage =
-      image.decodeImage(assetImageByteData.buffer.asUint8List()) as image.Image;
-
-  image.Image resizeImage =
-      image.copyResize(baseSizeImage, height: 400, width: 400);
-
-  ui.Codec codec = await ui.instantiateImageCodec(image.encodePng(resizeImage));
+      targetHeight: 2200,
+      targetWidth: 1700);
   ui.FrameInfo frameInfo = await codec.getNextFrame();
   return frameInfo.image;
 }
 
 class ImagePainter extends CustomPainter {
   final ui.Image? siteMapImage;
-  ImagePainter(this.siteMapImage);
+  final List<Point> points;
+  final scale;
+  final double tX, tY;
+  ImagePainter(this.siteMapImage, this.points, this.tX, this.tY, this.scale);
+
+  void drawPoint(Canvas canvas, Point coords, double size, Paint paint) {
+    paint..color = ui.Color.fromRGBO(244, 236, 7, 0.56);
+
+    Offset center = Offset(coords.x, coords.y);
+    canvas.drawCircle(center, size, paint);
+  }
 
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
     if (siteMapImage != null) {
+      canvas.scale(scale);
+      canvas.translate(tX, tY);
       canvas.drawImage(siteMapImage!, Offset.zero, Paint());
+      for (var i = 0; i < points.length; i++) {
+        drawPoint(canvas, points[i], 10, Paint());
+      }
     }
   }
 
   @override
   bool shouldRepaint(ImagePainter oldDelegate) {
-    return siteMapImage != oldDelegate.siteMapImage;
+    return (siteMapImage != oldDelegate.siteMapImage ||
+        points.length != oldDelegate.points.length ||
+        tX != oldDelegate.tX ||
+        tY != oldDelegate.tY);
   }
 }
